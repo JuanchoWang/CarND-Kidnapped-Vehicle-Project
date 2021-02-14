@@ -30,7 +30,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
    * NOTE: Consult particle_filter.h for more information about this method 
    *   (and others in this file).
    */
-  num_particles = 10;  // TODO: Set the number of particles
+  num_particles = 100;  // TODO: Set the number of particles
   
   std::default_random_engine gen;
   
@@ -63,11 +63,22 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
   std::default_random_engine gen;
   
   for (int i = 0; i < num_particles; ++i) {
+    double x_pred;
+    double y_pred;
+    double theta_pred;
+    
     double x_pred_sinpart = sin(particles[i].theta + yaw_rate * delta_t) - sin(particles[i].theta);
     double y_pred_cospart = cos(particles[i].theta) - cos(particles[i].theta + yaw_rate * delta_t);
-    double x_pred = particles[i].x + velocity * x_pred_sinpart / yaw_rate;
-    double y_pred = particles[i].y + velocity * y_pred_cospart / yaw_rate;
-    double theta_pred = particles[i].theta + yaw_rate * delta_t;
+    
+    if (fabs(yaw_rate) < 0.0001) {
+      x_pred = particles[i].x + velocity * delta_t * cos(particles[i].theta);
+      y_pred = particles[i].y + velocity * delta_t * sin(particles[i].theta);
+    }
+    else {
+      x_pred = particles[i].x + velocity * x_pred_sinpart / yaw_rate;
+      y_pred = particles[i].y + velocity * y_pred_cospart / yaw_rate;
+    }
+    theta_pred = particles[i].theta + yaw_rate * delta_t;
     
     // construct normal distribution inside loop (mu is different for each particle)
     std::normal_distribution<double> dist_x(x_pred, std_pos[0]);
@@ -160,34 +171,40 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
     
     // associate observations with landmarks (in map coord sys)
     // TODO: check the size of temp_landmark_vectors. if none of landmarks is within the sensor range, weight shall be 0
-    dataAssociation(temp_landmark_vectors, obs_map_vectors);
-    
-    // maybe set associations to paritcle's attributes
-    vector<int> assoid_vector;
-    vector<double> obs_map_xvector;
-    vector<double> obs_map_yvector;
-    for (int obs_idx = 0; obs_idx < obs_map_vectors.size(); ++obs_idx) {
-      assoid_vector.push_back(obs_map_vectors[obs_idx].id);
-      obs_map_xvector.push_back(obs_map_vectors[obs_idx].x);
-      obs_map_yvector.push_back(obs_map_vectors[obs_idx].y);
+    if (temp_landmark_vectors.size() > 0) {
+      dataAssociation(temp_landmark_vectors, obs_map_vectors);
       
-      // tricky way to change values in obs_map_vectors with landmark pos
-      int lm_idx = 0;
-      while (temp_landmark_vectors[lm_idx].id != obs_map_vectors[obs_idx].id) {
-        ++lm_idx;
+      // maybe set associations to paritcle's attributes
+      vector<int> assoid_vector;
+      vector<double> obs_map_xvector;
+      vector<double> obs_map_yvector;
+      for (int obs_idx = 0; obs_idx < obs_map_vectors.size(); ++obs_idx) {
+        assoid_vector.push_back(obs_map_vectors[obs_idx].id);
+        obs_map_xvector.push_back(obs_map_vectors[obs_idx].x);
+        obs_map_yvector.push_back(obs_map_vectors[obs_idx].y);
+        
+        // tricky way to change values in obs_map_vectors with landmark pos
+        int lm_idx = 0;
+        while (temp_landmark_vectors[lm_idx].id != obs_map_vectors[obs_idx].id) {
+          ++lm_idx;
+        }
+        obs_map_vectors[obs_idx].x = temp_landmark_vectors[lm_idx].x;
+        obs_map_vectors[obs_idx].y = temp_landmark_vectors[lm_idx].y;
       }
-      obs_map_vectors[obs_idx].x = temp_landmark_vectors[lm_idx].x;
-      obs_map_vectors[obs_idx].y = temp_landmark_vectors[lm_idx].y;
+      SetAssociations(particles[i], assoid_vector, obs_map_xvector, obs_map_yvector);
+      
+      // calculate weight of a certain particle based on Multi-variate Gaussian multiplied over all measurements
+      double exponent;
+      double gauss_norm;
+      gauss_norm = 1 / (2 * M_PI * std_landmark[0] * std_landmark[1]);
+      for (int obs_idx = 0; obs_idx < obs_map_vectors.size(); ++obs_idx) {
+        exponent = (pow(particles[i].sense_x[obs_idx] - obs_map_vectors[obs_idx].x, 2) / (2 * pow(std_landmark[0], 2))) + (pow(particles[i].sense_y[obs_idx] - obs_map_vectors[obs_idx].y, 2) / (2 * pow(std_landmark[1], 2)));
+        particles[i].weight *= gauss_norm * exp(-exponent);
+      }
     }
-    SetAssociations(particles[i], assoid_vector, obs_map_xvector, obs_map_yvector);
-    
-    // calculate weight of a certain particle based on Multi-variate Gaussian multiplied over all measurements
-    double exponent;
-    double gauss_norm;
-    gauss_norm = 1 / (2 * M_PI * std_landmark[0] * std_landmark[1]);
-    for (int obs_idx = 0; obs_idx < obs_map_vectors.size(); ++obs_idx) {
-      exponent = (pow(particles[i].sense_x[obs_idx] - obs_map_vectors[obs_idx].x, 2) / (2 * pow(std_landmark[0], 2))) + (pow(particles[i].sense_y[obs_idx] - obs_map_vectors[obs_idx].y, 2) / (2 * pow(std_landmark[1], 2)));
-      particles[i].weight *= gauss_norm * exp(-exponent);
+    else {
+      //std::cout << particles[i].x << particles[i].y << std::endl;
+      particles[i].weight = 0;
     }
   }
 
