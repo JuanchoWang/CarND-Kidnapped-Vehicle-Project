@@ -41,6 +41,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
   
   for (int i = 0; i < num_particles; ++i) {
     Particle particle_sample = {};
+    particle_sample.id = i;
     particle_sample.x = dist_x(gen);
     particle_sample.y = dist_y(gen);
     particle_sample.theta = dist_theta(gen);
@@ -170,7 +171,7 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
     }
     
     // associate observations with landmarks (in map coord sys)
-    // TODO: check the size of temp_landmark_vectors. if none of landmarks is within the sensor range, weight shall be 0
+    // check the size of temp_landmark_vectors.
     if (temp_landmark_vectors.size() > 0) {
       dataAssociation(temp_landmark_vectors, obs_map_vectors);
       
@@ -193,6 +194,9 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
       }
       SetAssociations(particles[i], assoid_vector, obs_map_xvector, obs_map_yvector);
       
+      // reset particle weight
+      particles[i].weight = 1.0;
+      
       // calculate weight of a certain particle based on Multi-variate Gaussian multiplied over all measurements
       double exponent;
       double gauss_norm;
@@ -200,10 +204,11 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
       for (int obs_idx = 0; obs_idx < obs_map_vectors.size(); ++obs_idx) {
         exponent = (pow(particles[i].sense_x[obs_idx] - obs_map_vectors[obs_idx].x, 2) / (2 * pow(std_landmark[0], 2))) + (pow(particles[i].sense_y[obs_idx] - obs_map_vectors[obs_idx].y, 2) / (2 * pow(std_landmark[1], 2)));
         particles[i].weight *= gauss_norm * exp(-exponent);
+        // By far, there is no explanation why all the weights can be zero at the same time, with given valid observations
       }
     }
     else {
-      //std::cout << particles[i].x << particles[i].y << std::endl;
+      // if none of landmarks is within the sensor range, weight shall be 0
       particles[i].weight = 0;
     }
   }
@@ -218,30 +223,49 @@ void ParticleFilter::resample() {
    *   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
    */
   // normalize weights
-  double weight_sum = 0;
+  // double weight_sum = 0;  // weight_sum causes NaN weights
   double max_weight = 0;
-  vector<double> weight_vector;
+  //for (int i = 0; i < num_particles; ++i) {
+  //  weight_sum += particles[i].weight;
+  //}
   for (int i = 0; i < num_particles; ++i) {
-    weight_sum += particles[i].weight;
-  }
-  for (int i = 0; i < num_particles; ++i) {
-    particles[i].weight /= weight_sum;
+    // particles[i].weight /= weight_sum;
     if (max_weight < particles[i].weight) {
       max_weight = particles[i].weight;
     }
-    weight_vector.push_back(particles[i].weight);
+    weights.push_back(particles[i].weight);
   }
 
-  // resampling with discrete distribution
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::discrete_distribution<int> d(weight_vector.begin(), weight_vector.end());
   vector<Particle> new_particles;
+  // resampling with discrete distribution
+  //std::random_device rd;
+  //std::mt19937 gen(rd());
+  //std::discrete_distribution<int> d(weight_vector.begin(), weight_vector.end());
+  
+  // resample with wheel algorithm
+  std::default_random_engine gen;
+  std::uniform_real_distribution<double> distDouble(0.0, max_weight);
+  std::uniform_int_distribution<int> distInt(0, num_particles - 1);
+  
+  // initialize weight index and beta (wheel)
+  int w_idx = distInt(gen);
+  double beta = 0.0;
+  
   for (int i = 0; i < num_particles; ++i) {
-    Particle particle_newsample = particles[d(gen)];
+    // update weight index and beta (wheel)
+    beta += distDouble(gen) * 2.0;
+      while( beta > weights[w_idx]) {
+        beta -= weights[w_idx];
+        w_idx = (w_idx + 1) % num_particles;
+      }
+    // Particle particle_newsample = particles[d(gen)];
+    Particle particle_newsample = particles[w_idx];
+    particle_newsample.id = i;
     new_particles.push_back(particle_newsample);
+    // TODO: A very special case: all the particle weights are 0 and this resampling will only take one random particle repeatedly
   }
   particles = new_particles;
+  weights.clear();  // IMPORTANT if the vector is only defined once
 }
 
 void ParticleFilter::SetAssociations(Particle& particle, 
